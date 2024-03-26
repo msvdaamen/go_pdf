@@ -1,9 +1,12 @@
 package controllers
 
 import (
+	"archive/zip"
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	pdf2 "print_com/src/modules/pdf"
 	"strconv"
 )
@@ -18,6 +21,7 @@ func Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	defer file.Close()
 	http.ServeFile(w, r, file.Name())
 }
 
@@ -46,6 +50,7 @@ func AddPage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	defer file.Close()
 	http.ServeFile(w, r, file.Name())
 }
 
@@ -74,6 +79,7 @@ func RemovePage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	defer file.Close()
 	http.ServeFile(w, r, file.Name())
 }
 
@@ -107,6 +113,7 @@ func ReorderPages(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	defer file.Close()
 	http.ServeFile(w, r, file.Name())
 }
 
@@ -131,7 +138,63 @@ func MergePdfs(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	defer file.Close()
 	http.ServeFile(w, r, file.Name())
+}
+
+func SplitPdf(w http.ResponseWriter, r *http.Request) {
+	fileBytes, err := getFileBytesFromRequest(r)
+	if err != nil {
+		return
+	}
+
+	rs := io.ReadSeeker(bytes.NewReader(fileBytes))
+	archive, err := os.Create("archive.zip")
+	if err != nil {
+		return
+	}
+	defer archive.Close()
+	zipWriter := zip.NewWriter(archive)
+	defer zipWriter.Close()
+	pageNumber := 1
+	for {
+		err := func() (err error) {
+			pdf := pdf2.Create()
+			err = pdf.ImportPage(&rs, pageNumber)
+			if err != nil {
+				return
+			}
+			pageNumber++
+			file, err := pdf.ToFile()
+			if err != nil {
+				return
+			}
+			fileInfo, err := file.Stat()
+			if err != nil {
+				return
+			}
+			header, err := zip.FileInfoHeader(fileInfo)
+			header.Name = fmt.Sprintf("pdf-%v.pdf", pageNumber-1)
+			if err != nil {
+				return
+			}
+			writer, err := zipWriter.CreateHeader(header)
+			if err != nil {
+				return
+			}
+			_, err = io.Copy(writer, file)
+			if err != nil {
+				return
+			}
+			defer file.Close()
+			return
+		}()
+		if err != nil {
+			break
+		}
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	http.ServeFile(w, r, archive.Name())
 }
 
 func getFileBytesFromRequest(r *http.Request) (fileBytes []byte, err error) {
